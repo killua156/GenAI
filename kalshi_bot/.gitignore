@@ -5,4 +5,7 @@ __pycache__/
 venv/
 reports/*.md
 reports/*.json
+reports/.partial/
+state/
+.pytest_cache/
 !reports/.gitkeep

@@ -1,14 +1,19 @@
 # Kalshi Bot
 
-A daily bot that scans Kalshi prediction markets, researches each one with Claude + web search, and writes a markdown report of suggested trades. Read-only — it does not place orders.
+A daily bot that scans Kalshi prediction markets, researches each one with Claude + web search, and writes markdown + JSON reports of suggested trades. Read-only — it does not place orders.
 
-> Educational/research output. Not financial advice.
+> Educational/research output. Not financial advice. Verify before trading.
 
 ## How it works
 
-1. Hits Kalshi's public REST API for currently-open markets and picks the highest-volume ones.
-2. For each market, asks Claude (with the `web_search` tool) to research the underlying event, estimate a probability, compare it to the market's implied probability, and produce a `BUY YES` / `BUY NO` / `PASS` recommendation with confidence and reasoning.
-3. Aggregates everything into `reports/YYYY-MM-DD.md`, with actionable picks at the top.
+1. Pulls open markets from Kalshi's public API and selects N via a configurable strategy:
+   - **`volume`** (default): top by 24h volume
+   - **`movers`**: biggest YES price change since the last run (uses local state)
+   - **`illiquid`**: widest bid/ask spreads with a volume floor — where information edge tends to be highest
+2. For each market, asks Claude (with the `web_search` tool) to research the event and submit a structured recommendation via tool_use (`BUY_YES` / `BUY_NO` / `PASS` with confidence, edge, reasoning, and sources).
+3. Writes per-market results to a JSONL file as they complete, then aggregates into `reports/{run_id}.md` and `.json`.
+
+Each run produces a fresh timestamped report — nothing is overwritten.
 
 ## Setup
 
@@ -17,65 +22,101 @@ cd kalshi_bot
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env and put your ANTHROPIC_API_KEY in it
+# Set ANTHROPIC_API_KEY in .env
 ```
 
-You also need to enable the web search tool in the Claude Console (Settings → Privacy).
+Web search must be enabled in your Claude Console (Settings → Privacy).
 
 ## Run
 
 ```bash
-# Default: analyze top 10 highest-volume open markets
+# Default: top 10 by volume, $5 cost cap, interactive confirm
 python bot.py
 
-# Inspect what would be analyzed without spending tokens
+# Different selection strategies
+python bot.py --mode movers
+python bot.py --mode illiquid --top 5
+
+# Inspect selection without spending tokens
 python bot.py --dry-run
+python bot.py --dry-run --mode illiquid
 
-# More markets, larger search budget per market
-python bot.py --top 20 --max-searches 8
+# Deeper analysis: more markets, more searches each
+python bot.py --top 20 --max-searches 7 --max-cost 3.0
 
-# Restrict to one event (e.g. all sub-markets of a specific event)
+# Single event
 python bot.py --event KXNFLGAME-25NOV09SFLAR
 
-# Use Opus 4.7 for deeper analysis (slower, more expensive)
-python bot.py --model claude-opus-4-7
+# Other models
+python bot.py --model claude-opus-4-7          # pricier, more thorough
+python bot.py --model claude-haiku-4-5-20251001 # cheaper, faster
+
+# Cron-friendly (no interactive prompt)
+python bot.py --no-prompt --max-cost 2.0
 ```
 
-The report lands in `reports/YYYY-MM-DD.md`. Re-running on the same day overwrites it.
+## Outputs
 
-## Layout
+```
+reports/2026-05-19_073000.md     # human-readable, actionable picks first
+reports/2026-05-19_073000.json   # machine-readable, includes raw usage data
+state/last_prices.json           # tickers and prior YES asks, for movers mode
+```
+
+## Cost guardrails
+
+Before any LLM call, the bot prints an estimate and refuses to proceed if it exceeds `--max-cost` (default $5). On TTY you also get a `Proceed? [y/N]` confirmation; `--no-prompt` skips it for cron.
+
+After the run, the actual cost is summed from each `response.usage` and shown + persisted into the JSON.
+
+Typical costs (10 markets, Sonnet 4.6, 5 searches each): roughly $0.70–$1.50. Opus 4.7: 4–5× that. Haiku: ~25% of Sonnet.
+
+## Recovery after a crash
+
+If the bot dies mid-run, the partial JSONL stays on disk:
+
+```bash
+ls reports/.partial/
+python bot.py --resume reports/.partial/2026-05-19_073000.jsonl
+# Regenerates .md + .json from completed markets, then deletes the partial.
+```
+
+## Cron
+
+```cron
+30 7 * * * cd /path/to/kalshi_bot && /path/to/.venv/bin/python bot.py --no-prompt --max-cost 1.50 --top 12 --mode volume >> cron.log 2>&1
+```
+
+## Tests
+
+```bash
+cd kalshi_bot
+pytest tests/ -v
+```
+
+Mocked unit tests cover market cleaning, mode selection, tool-use extraction, retry/fallback paths, report rendering, cost math, and state persistence.
+
+## Project layout
 
 ```
 kalshi_bot/
-├── bot.py             # CLI entry point
-├── kalshi_client.py   # Public Kalshi REST client
-├── analyzer.py        # Claude + web_search analyzer
-├── report.py          # Markdown report writer
+├── bot.py             # CLI orchestrator
+├── kalshi_client.py   # Public REST client; market cleaner; mode selectors
+├── analyzer.py        # Claude + web_search; structured tool_use output
+├── report.py          # Markdown + JSON writers; JSONL incremental persistence
+├── costs.py           # Pricing table; estimate + from_usage
+├── state.py           # last_prices.json read/write for movers diffing
 ├── requirements.txt
 ├── .env.example
-└── reports/           # Generated reports (gitignored)
+├── tests/             # pytest unit tests
+├── reports/           # generated reports (gitignored)
+└── state/             # prior prices (gitignored)
 ```
 
-## Tuning
+## Limitations
 
-- `--min-volume`: skip thinly-traded markets. Default 1000 contracts/24h.
-- `--top`: how many markets to analyze. Each one costs ~one Claude call + a few web searches (~$0.05-$0.20 depending on model).
-- `--model`: `claude-sonnet-4-6` (default, fast/cheap) or `claude-opus-4-7` (slower, more thorough).
-- `KALSHI_API_BASE` env var: override the API base if Kalshi changes it.
-
-## Schedule it
-
-To run it every morning, add a cron entry:
-
-```cron
-30 7 * * * cd /path/to/kalshi_bot && /path/to/.venv/bin/python bot.py --top 15 >> cron.log 2>&1
-```
-
-## Extending
-
-Obvious next steps if you want more:
-
-- Authenticated mode for orderbook depth, position tracking, or actually placing orders (Kalshi requires API key + RSA signed requests).
-- Persist analyses to a SQLite DB and track recommendation P&L over time.
-- Hybrid mode: run a cheap statistical screen first (e.g. order-book imbalance, price drift) to shortlist markets before paying for LLM analysis.
-- Slack/email/webhook delivery of the report.
+- First run with `--mode movers` has no prior state; falls back to in-market `previous_yes_ask` (prior tick, not yesterday). Subsequent runs use proper diffs.
+- Pricing constants in `costs.py` are accurate as of build time. Update if Anthropic changes rates.
+- The state file is capped at 500 most-recent tickers to prevent unbounded growth.
+- Top-by-volume markets tend to be the most efficient; `movers` and `illiquid` modes exist precisely to look where edge is likelier.
+- No authentication, no order placement, no backtest, no calibration tracking — out of scope by design.
