@@ -1,0 +1,17 @@
+# Kalshi bot — crontab template.
+#
+# Install: `crontab -e` then paste the two lines below (edit PATH if needed).
+# Verify: `crontab -l` to confirm, `tail -f ~/path/to/kalshi_bot/logs/bot-*.log` after.
+#
+# Timezone: cron uses the system's local time. The schedule below runs the bot
+# at 07:30 local (fresh overnight news priced in) and the resolver at 20:00 on
+# Sundays. Change the first two fields (minute hour) to taste.
+#
+# Replace /ABSOLUTE/PATH/TO/kalshi_bot with the real absolute path on your box.
+# `cd /path/to/repo/kalshi_bot && pwd` will give it to you.
+
+# Daily picks — 07:30 every day
+30 7 * * * /ABSOLUTE/PATH/TO/kalshi_bot/scripts/run_daily.sh
+
+# Weekly resolver — Sundays at 20:00 to catch end-of-week settlements
+0 20 * * 0 /ABSOLUTE/PATH/TO/kalshi_bot/scripts/run_resolve.sh

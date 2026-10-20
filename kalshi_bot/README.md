@@ -81,6 +81,63 @@ cat reports/EVAL.md
 
 Output: `reports/EVAL.md` + `reports/EVAL.json`.
 
+## Automate with cron
+
+Two wrapper scripts in `scripts/` resolve paths and log properly so cron can call them directly:
+
+- `scripts/run_daily.sh` — runs the bot with the frozen `EVAL_PROTOCOL.md` config
+- `scripts/run_resolve.sh` — runs the resolver (no API key needed, public endpoints only)
+
+Both write to `logs/{bot,resolve}-YYYY-MM-DD.log` (gitignored) and auto-prune logs older than 30 days. They prefer the project's `.venv/bin/python` and fall back to system `python3`.
+
+### Install
+
+```bash
+cd /path/to/kalshi_bot
+
+# 1. One-time setup: venv + deps + .env with your key
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env && $EDITOR .env    # paste ANTHROPIC_API_KEY
+
+# 2. Verify the wrapper works before scheduling
+./scripts/run_daily.sh && tail logs/bot-*.log
+
+# 3. Edit the crontab template, then install
+sed -i "s|/ABSOLUTE/PATH/TO/kalshi_bot|$(pwd)|g" scripts/kalshi_bot.cron
+crontab -l 2>/dev/null | cat - scripts/kalshi_bot.cron | crontab -
+crontab -l    # confirm it's there
+```
+
+Default schedule:
+- **Daily bot run at 07:30 local** — overnight news priced in, before the day starts.
+- **Weekly resolver on Sundays at 20:00** — enough time for weekend sports/politics markets to settle.
+
+Tweak the `30 7 * * *` and `0 20 * * 0` fields in `scripts/kalshi_bot.cron` before installing if you want a different schedule.
+
+### Monitor
+
+```bash
+tail -f logs/bot-$(date -u +%Y-%m-%d).log       # today's run
+ls -lt logs/                                     # recent runs
+grep -l "ERROR\|Traceback" logs/*.log            # anything that went wrong
+```
+
+### Common gotchas
+
+- **macOS:** cron needs Full Disk Access. System Settings → Privacy & Security → Full Disk Access → add `/usr/sbin/cron` and your terminal app. Alternative: use `launchd` with the equivalent schedule.
+- **Timezone:** cron uses system local time. Verify with `date` on the machine running the job.
+- **PATH:** the wrapper exports a sane PATH, but if your `python3` lives somewhere unusual, run `which python3` and either symlink into `/usr/local/bin` or edit the wrapper.
+- **Failure alerting:** cron doesn't notify unless `MAILTO=` is set and the host has mail configured. Simplest alert for personal use: a weekly glance at `grep -c ERROR logs/*.log`.
+- **First-run auth:** if the first scheduled run fails with "ANTHROPIC_API_KEY not set", your `.env` isn't being picked up. Confirm the file is in the project root and the script's `cd` landed in the right directory (check the log — it echoes `cwd:`).
+
+### Disable
+
+```bash
+crontab -e    # delete the two kalshi_bot lines, save
+# Or remove entirely: crontab -r (nuclear — removes ALL your cron entries)
+```
+
 ## Outputs
 
 ```
@@ -135,10 +192,12 @@ kalshi_bot/
 ├── resolve.py         # Paper-trade P&L + Brier evaluator
 ├── prompts.md         # Ready-to-paste Claude.ai chat prompts (manual alternative)
 ├── EVAL_PROTOCOL.md   # Pre-registered rules for the paper-trading week
+├── scripts/           # Cron wrappers + crontab template
 ├── requirements.txt
 ├── .env.example
 ├── tests/             # pytest unit tests
 ├── reports/           # generated reports (gitignored)
+├── logs/              # cron run logs (gitignored, auto-pruned at 30d)
 └── state/             # prior prices (gitignored)
 ```
 

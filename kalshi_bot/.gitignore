@@ -7,5 +7,6 @@ reports/*.md
 reports/*.json
 reports/.partial/
 state/
+logs/
 .pytest_cache/
 !reports/.gitkeep
