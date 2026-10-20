@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import random
 import time
+from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
 
 import requests
@@ -33,6 +34,25 @@ def _clean_market(m: dict) -> Optional[dict]:
         except (TypeError, ValueError):
             out[k] = 0
     return out
+
+
+def close_within_days(market: dict, max_days: Optional[int]) -> bool:
+    """True if `market` closes within max_days from now, or if max_days is None (no filter)."""
+    if max_days is None:
+        return True
+    close_time = market.get("close_time")
+    if not close_time:
+        return False
+    try:
+        if close_time.endswith("Z"):
+            close_time = close_time[:-1] + "+00:00"
+        close_dt = datetime.fromisoformat(close_time)
+    except (ValueError, AttributeError):
+        return False
+    if close_dt.tzinfo is None:
+        close_dt = close_dt.replace(tzinfo=timezone.utc)
+    delta_days = (close_dt - datetime.now(timezone.utc)).total_seconds() / 86400
+    return 0 <= delta_days <= max_days
 
 
 class KalshiClient:
@@ -112,11 +132,14 @@ class KalshiClient:
         min_volume: int,
         prior_prices: Optional[dict[str, int]] = None,
         max_pages: int = 10,
+        max_days_to_close: Optional[int] = None,
     ) -> list[dict]:
         """Return up to n markets selected per `mode`. Drops missing/malformed entries."""
         if mode not in ("volume", "movers", "illiquid"):
             raise ValueError(f"Unknown selection mode: {mode!r}")
         markets = list(self.iter_markets(status="open", max_pages=max_pages))
+        if max_days_to_close is not None:
+            markets = [m for m in markets if close_within_days(m, max_days_to_close)]
 
         if mode == "volume":
             filtered = [m for m in markets if m["volume_24h"] >= min_volume]

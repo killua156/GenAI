@@ -53,7 +53,33 @@ python bot.py --model claude-haiku-4-5-20251001 # cheaper, faster
 
 # Cron-friendly (no interactive prompt)
 python bot.py --no-prompt --max-cost 2.0
+
+# Paper-trading mode: only pick markets that'll resolve inside your test window
+python bot.py --max-days-to-close 10 --mode volume --no-prompt
 ```
+
+## Paper-trading evaluation
+
+Before risking real money, run the bot daily for a week and evaluate its picks against actual resolutions. See `EVAL_PROTOCOL.md` for the pre-registered rules (frozen config, decision thresholds, metrics).
+
+```bash
+# Day 1-7: generate picks (same config each day)
+python bot.py --mode volume --top 10 --max-days-to-close 10 \
+              --max-cost 2.0 --no-prompt
+
+# Day 7+ (and again on Day 14): resolve picks and compute P&L + Brier score
+python resolve.py
+cat reports/EVAL.md
+```
+
+`resolve.py` walks every `reports/*.json`, hits Kalshi for each ticker's resolution, and produces:
+
+- **Hit rate** (wins / resolved BUYs, 1 contract each)
+- **Total and mean paper P&L** in cents
+- **Brier score** across all probability estimates (incl. PASS). Lower is better; 0.25 is "always 50%".
+- **Breakdown by confidence** so you can see whether HIGH actually outperforms LOW.
+
+Output: `reports/EVAL.md` + `reports/EVAL.json`.
 
 ## Outputs
 
@@ -106,6 +132,9 @@ kalshi_bot/
 ├── report.py          # Markdown + JSON writers; JSONL incremental persistence
 ├── costs.py           # Pricing table; estimate + from_usage
 ├── state.py           # last_prices.json read/write for movers diffing
+├── resolve.py         # Paper-trade P&L + Brier evaluator
+├── prompts.md         # Ready-to-paste Claude.ai chat prompts (manual alternative)
+├── EVAL_PROTOCOL.md   # Pre-registered rules for the paper-trading week
 ├── requirements.txt
 ├── .env.example
 ├── tests/             # pytest unit tests

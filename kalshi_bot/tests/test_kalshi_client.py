@@ -119,6 +119,27 @@ def test_select_markets_unknown_mode():
         client.select_markets("nonsense", n=5, min_volume=0)
 
 
+def test_select_markets_filters_by_close_date(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    def iso(delta_days):
+        return (datetime.now(timezone.utc) + timedelta(days=delta_days)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+
+    client = KalshiClient()
+    markets = [
+        _market(ticker="KX-SOON", volume_24h=5000, close_time=iso(5)),
+        _market(ticker="KX-LATER", volume_24h=5000, close_time=iso(30)),
+        _market(ticker="KX-SOONER", volume_24h=5000, close_time=iso(2)),
+    ]
+    monkeypatch.setattr(client, "iter_markets", lambda **kw: iter(markets))
+    out = client.select_markets("volume", n=10, min_volume=1000, max_days_to_close=10)
+    tickers = {m["ticker"] for m in out}
+    assert tickers == {"KX-SOON", "KX-SOONER"}
+    assert "KX-LATER" not in tickers
+
+
 def test_iter_markets_drops_invalid(monkeypatch):
     client = KalshiClient()
     pages = [{

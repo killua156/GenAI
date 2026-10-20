@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 from analyzer import Analyzer, DEFAULT_MODEL
 from costs import estimate as estimate_cost, from_usage
-from kalshi_client import DEFAULT_BASE, KalshiClient, summarize_orderbook
+from kalshi_client import DEFAULT_BASE, KalshiClient, close_within_days, summarize_orderbook
 from report import append_partial, read_partial, write_outputs
 from state import load_prior_prices, save_prior_prices
 
@@ -37,6 +37,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--series", default=None, help="Filter to a single series ticker")
     p.add_argument("--max-cost", type=float, default=5.0,
                    help="Hard cap on estimated USD spend per run (default $5)")
+    p.add_argument("--max-days-to-close", type=int, default=None,
+                   help="Only pick markets closing within N days (useful for paper-trade windows)")
     p.add_argument("--no-prompt", action="store_true",
                    help="Skip interactive cost confirmation (for cron)")
     p.add_argument("--resume", default=None,
@@ -86,6 +88,7 @@ def main() -> int:
                 series_ticker=args.series,
             )
             if m["volume_24h"] >= args.min_volume
+            and close_within_days(m, args.max_days_to_close)
         ]
         all_markets.sort(key=lambda m: m["volume_24h"], reverse=True)
         markets = all_markets[: args.top]
@@ -95,6 +98,7 @@ def main() -> int:
             n=args.top,
             min_volume=args.min_volume,
             prior_prices=prior_prices,
+            max_days_to_close=args.max_days_to_close,
         )
 
     if kalshi.dropped_markets:
