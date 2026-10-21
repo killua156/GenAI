@@ -117,11 +117,47 @@ Tweak the `30 7 * * *` and `0 20 * * 0` fields in `scripts/kalshi_bot.cron` befo
 
 ### Monitor
 
+Quick status check (safe to run anytime, no API calls, no cost):
+
 ```bash
-tail -f logs/bot-$(date -u +%Y-%m-%d).log       # today's run
-ls -lt logs/                                     # recent runs
-grep -l "ERROR\|Traceback" logs/*.log            # anything that went wrong
+./scripts/healthcheck.sh
 ```
+
+Reports in one glance: `.env` present, cron scheduled, last run age, last run clean, how many reports exist, when `EVAL.md` was last refreshed. Exit code is non-zero if any check fails — easy to pipe into alerting.
+
+Raw logs:
+
+```bash
+tail -f logs/bot-$(date -u +%Y-%m-%d).log       # watch today
+ls -lt logs/                                     # recent runs
+grep -l "ERROR\|Traceback" logs/*.log            # find failures across all logs
+```
+
+### Day 0 pre-flight (do this before trusting cron)
+
+```bash
+# 1. Sanity-check config without spending tokens
+python bot.py --dry-run --top 3
+
+# 2. Run end-to-end once manually (same command cron will use)
+./scripts/run_daily.sh && cat $(ls -t reports/*.md | head -1)
+
+# 3. Verify health looks good
+./scripts/healthcheck.sh
+```
+
+If the markdown report shows real Kalshi markets with real reasoning and real source URLs, cron can take over. If anything looks off, fix it before Day 1 — cron will not notice.
+
+### Keep the machine awake
+
+Cron needs the box up at the scheduled time. For 1–2 week unattended runs:
+
+- **macOS:** `caffeinate -s` in a terminal (will keep system awake while that terminal is open), or System Settings → Battery/Power → disable "Put display to sleep" / "Prevent sleep automatically when the display is off" while on power.
+- **Linux desktop:** `systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target` (undo with `unmask` after the test).
+- **Windows:** Control Panel → Power Options → Change plan settings → "Put the computer to sleep: Never" while plugged in.
+- **Best option:** run on a server or VPS that's always on.
+
+A laptop that sleeps overnight means zero runs the next morning — and `healthcheck.sh` will flag "last run >36h ago" when you check in.
 
 ### Common gotchas
 
